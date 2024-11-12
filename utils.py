@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
@@ -17,8 +18,7 @@ def getDataLoader(name, batch_size):
     if name == 'mnist':
         # Load MNIST dataset
         transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
+            transforms.ToTensor()
             ])
         
         mnist = torchvision.datasets.MNIST(root='./data', train=True, transform=transform, download=True)
@@ -29,8 +29,7 @@ def getDataLoader(name, batch_size):
     elif name == 'cifar':
         # Load CIFAR-10 dataset
         transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            transforms.ToTensor()
             ])
         
         cifar10 = torchvision.datasets.CIFAR10(root='./data', train=True, transform=transform, download=True)
@@ -170,7 +169,13 @@ def latent_space_interpolation_gan(generator, latent_dim, device, folder_name, n
         plt.savefig(f'{folder_name}/latent_space_interpolation.png')
         plt.close()
 
-def trainVAE(num_epochs, dataloader, model, latent_dim, optimizer, device):
+# loss for vae
+def loss_function(recon_x, x, mu, logvar):
+    BCE = F.binary_cross_entropy(recon_x, x, reduction='sum')
+    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    return BCE + KLD
+
+def trainVAE(num_epochs, dataloader, model, optimizer, device):
     # send to device
     model.to(device)
     
@@ -178,23 +183,21 @@ def trainVAE(num_epochs, dataloader, model, latent_dim, optimizer, device):
     elbo_losses = []
     kl_divergences = []
 
-    for epoch in range(1, num_epochs + 1):
+    for epoch in tqdm(range(num_epochs)):
         train_loss = 0
         kld_loss = 0
         for batch_idx, (data, _) in enumerate(dataloader):
+            data = data.to(device)
             optimizer.zero_grad()
             recon_batch, mu, logvar = model(data)
-            
-            elbo_loss = F.binary_cross_entropy(recon_batch, data.view(-1, 784), reduction='sum')
-            kld_loss += -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-            
-            loss = elbo_loss + kld_loss
+            loss = loss_function(recon_batch, data, mu, logvar)
             loss.backward()
-            
+            train_loss += loss.item()
+            kld_loss += -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())      
             train_loss += loss.item()
             optimizer.step()
 
-        avg_loss = elbo_loss.item() / len(dataloader.dataset)
+        avg_loss = train_loss / len(dataloader.dataset)
         avg_kld = kld_loss.item() / len(dataloader.dataset)
         elbo_losses.append(avg_loss)
         kl_divergences.append(avg_kld)

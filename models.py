@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 
 # Set random seed for reproducibility
 torch.manual_seed(42)
@@ -45,19 +46,19 @@ class GeneratorCIFAR(nn.Module):
             # input is Z, going into a convolution
             nn.ConvTranspose2d(latent_dim, 512, 4, 1, 0, bias=False),
             nn.BatchNorm2d(512),
-            nn.ReLU(True),
+            nn.ReLU(),
             # state size. 512 x 4 x 4
             nn.ConvTranspose2d(512, 256, 4, 2, 1, bias=False),
             nn.BatchNorm2d(256),
-            nn.ReLU(True),
+            nn.ReLU(),
             # state size. 256 x 8 x 8
             nn.ConvTranspose2d(256, 128, 4, 2, 1, bias=False),
             nn.BatchNorm2d(128),
-            nn.ReLU(True),
+            nn.ReLU(),
             # state size. 128 x 16 x 16
             nn.ConvTranspose2d(128, 64, 4, 2, 1, bias=False),
             nn.BatchNorm2d(64),
-            nn.ReLU(True),
+            nn.ReLU(),
             # state size. 64 x 32 x 32
             nn.ConvTranspose2d(64, 3, 3, 1, 1, bias=False),
             nn.Tanh()
@@ -95,15 +96,39 @@ class DiscriminatorCIFAR(nn.Module):
 class VAE(nn.Module):
     def __init__(self, latent_dim = 20):
         super(VAE, self).__init__()
-        self.fc1 = nn.Linear(784, 400)
-        self.fc21 = nn.Linear(400, latent_dim)
-        self.fc22 = nn.Linear(400, latent_dim)
-        self.fc3 = nn.Linear(latent_dim, 400)
-        self.fc4 = nn.Linear(400, 784)
+        
+        # Encoder
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(64 * 7 * 7, 400),
+            nn.ReLU()
+        )
+        
+        self.fc_mu = nn.Linear(400, latent_dim)
+        self.fc_logvar = nn.Linear(400, latent_dim)
+        
+        # Decoder
+        self.decoder_dense = nn.Sequential(
+            nn.Linear(latent_dim, 400),
+            nn.ReLU(),
+            nn.Linear(400, 64 * 7 * 7),
+            nn.ReLU()
+        )
+        
+        self.decoder_conv = nn.Sequential(
+            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 1, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.Sigmoid()
+        )
 
     def encode(self, x):
-        h1 = nn.relu(self.fc1(x))
-        return self.fc21(h1), self.fc22(h1)
+        x = self.encoder(x)
+        return self.fc_mu(x), self.fc_logvar(x)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -111,10 +136,11 @@ class VAE(nn.Module):
         return mu + eps * std
 
     def decode(self, z):
-        h3 = nn.relu(self.fc3(z))
-        return torch.sigmoid(self.fc4(h3))
+        z = self.decoder_dense(z)
+        z = z.view(-1, 64, 7, 7)
+        return self.decoder_conv(z)
 
     def forward(self, x):
-        mu, logvar = self.encode(x.view(-1, 784))
+        mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
         return self.decode(z), mu, logvar
